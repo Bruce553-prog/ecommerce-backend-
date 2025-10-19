@@ -59,3 +59,9 @@ python manage.py runserver
 🔹 http://127.0.0.1:8000/                → Home page (if configured)
 
 
+# ------------------------------------------------------------
+# 👨‍💻 Author Information
+# Name: Bruce Wyllis
+# Role: Django Backend Developer
+# Project: ALX_Capstone_Project
+# ------------------------------------------------------------
