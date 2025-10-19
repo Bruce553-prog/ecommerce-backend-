@@ -43,6 +43,17 @@ The system also includes a **RESTful API** for integrations and **admin manageme
 | Version Control | Git & GitHub |
 
 ---
+## 🔗 API Endpoints
+
+| **Feature** | **Method** | **Endpoint** | **Description** |
+|--------------|-------------|---------------|------------------|
+| 🛍️ **Products** | `GET` | `/api/products/` | Retrieve a list of all available products |
+| 🛒 **Products** | `POST` | `/api/products/` | Add a new product (admin/vendor only) |
+| 📦 **Orders** | `GET` | `/api/orders/` | Retrieve all orders for the logged-in user |
+| 🧾 **Orders** | `POST` | `/api/orders/` | Create a new order |
+| 👤 **Users** | `POST` | `/users/signup/` | Register a new user account |
+| 🔐 **Users** | `POST` | `/users/login/` | Authenticate and log in a user |
+
 
 ## 👨‍💻 Author Information
 
