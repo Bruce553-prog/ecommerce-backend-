@@ -45,9 +45,17 @@ The system also includes a **RESTful API** for integrations and **admin manageme
 ---
 
 ## ⚙️ Installation Guide
+## 🚀 After Installation
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/<your-username>/ALX_Capstone_Project.git
-   cd ALX_Capstone_Project
+Once installation is complete, start your development server with:
+
+```bash
+python manage.py runserver
+🔹 http://127.0.0.1:8000/admin/          → Admin panel (manage users, products, and orders)
+🔹 http://127.0.0.1:8000/api/products/   → Product API endpoint (list & create products)
+🔹 http://127.0.0.1:8000/api/orders/     → Order API endpoint (list & create orders)
+🔹 http://127.0.0.1:8000/users/signup/   → User registration page
+🔹 http://127.0.0.1:8000/users/login/    → User login page
+🔹 http://127.0.0.1:8000/                → Home page (if configured)
+
 
