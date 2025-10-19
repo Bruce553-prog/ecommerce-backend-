@@ -44,6 +44,13 @@ The system also includes a **RESTful API** for integrations and **admin manageme
 
 ---
 
+## 👨‍💻 Author Information
+
+| Field | Details |
+|--------|----------|
+| **Name** | Bruce Wyllis |
+| **Role** | Django Backend Developer |
+| **Project** | ALX_Capstone_Project |
 ## ⚙️ Installation Guide
 ## 🚀 After Installation
 
