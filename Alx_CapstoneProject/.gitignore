@@ -11,3 +11,4 @@ db.sqlite3
 *.egg-info/
 build/
 dist/
+data.json
