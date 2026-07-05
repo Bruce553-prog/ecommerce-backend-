@@ -1,0 +1,14 @@
+asgiref==3.8.1
+django==4.2.25
+django-filter==24.3
+djangorestframework==3.15.2
+djangorestframework-simplejwt==5.3.1
+lazr.restfulclient==0.14.2
+pillow==10.4.0
+psycopg2-binary==2.9.10
+PyHamcrest==1.9.0
+python-decouple==3.8
+pytz==2025.2
+sqlparse==0.5.3
+tzdata==2025.2
+whitenoise==6.7.0
