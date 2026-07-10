@@ -1,15 +1,18 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from django.core.mail import send_mail
+from django.conf import settings
 from users.permissions import IsOwner, IsOwnerOrAdmin
-from .models import Cart, CartItem, Order, ShippingAddress, Payment
+from .models import Cart, CartItem, Order, ShippingAddress, Payment, PickupStation
 from .serializers import (
     CartSerializer,
     CartItemSerializer,
     OrderSerializer,
     OrderCreateSerializer,
     ShippingAddressSerializer,
-    PaymentSerializer
+    PaymentSerializer,
+    PickupStationSerializer
 )
 
 
@@ -28,6 +31,12 @@ class ShippingAddressViewSet(viewsets.ModelViewSet):
         address.is_default = True
         address.save()
         return Response({"detail": "Default address updated."})
+
+
+class PickupStationViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = PickupStation.objects.filter(is_active=True)
+    serializer_class = PickupStationSerializer
+    permission_classes = [permissions.AllowAny]
 
 
 class CartViewSet(viewsets.GenericViewSet):
@@ -135,7 +144,44 @@ class OrderViewSet(viewsets.GenericViewSet):
         serializer = OrderCreateSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         order = serializer.save()
-        return Response(OrderSerializer(order, context={'request': request}).data, status=status.HTTP_201_CREATED)
+
+        # Send order confirmation email
+        items_list = '\n'.join([
+            f"- {item.product.name} x {item.quantity} @ KES {item.price_at_purchase}"
+            for item in order.items.all()
+        ])
+
+        send_mail(
+            subject=f'Order Confirmation - Order #{order.id} | The WCT',
+            message=f'''Hi {request.user.username},
+
+Thank you for your order! Here are your order details:
+
+Order ID: #{order.id}
+Delivery Method: {order.delivery_method}
+
+Items Ordered:
+{items_list}
+
+Total: KES {order.get_total_price()}
+
+{"Shipping to: " + str(order.shipping_address) if order.shipping_address else "Pickup Station: " + str(order.pickup_station)}
+
+Your order is currently being processed. We will notify you once it is shipped.
+
+Thank you for shopping with The WCT!
+
+The WCT Team
+''',
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[request.user.email],
+            fail_silently=True,
+        )
+
+        return Response(
+            OrderSerializer(order, context={'request': request}).data,
+            status=status.HTTP_201_CREATED
+        )
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
