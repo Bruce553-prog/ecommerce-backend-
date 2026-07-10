@@ -1,4 +1,4 @@
-# 🛍️ ALX Capstone Project
+
 
 A fully functional **Django-based e-commerce and booking platform** that allows users to **sign up, log in, browse products, and make orders**.  
 The system also includes a **RESTful API** for integrations and **admin management** for vendors and site administrators.
