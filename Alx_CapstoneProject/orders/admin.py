@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Cart, CartItem, Order, OrderItem, ShippingAddress, Payment
+from .models import Cart, CartItem, Order, OrderItem, ShippingAddress, Payment, PickupStation
 
 
 class OrderItemInline(admin.TabularInline):
@@ -48,3 +48,8 @@ class ShippingAddressAdmin(admin.ModelAdmin):
 class PaymentAdmin(admin.ModelAdmin):
     list_display = ['order', 'amount', 'method','status', 'paid_at']
     list_filter = ['status', 'method']
+@admin.register(PickupStation)
+class PickupStationAdmin(admin.ModelAdmin):
+    list_display = ['name', 'location', 'city', 'phone', 'is_active']
+    list_filter = ['city', 'is_active']
+    search_fields = ['name', 'city']

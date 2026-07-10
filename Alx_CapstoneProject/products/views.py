@@ -23,9 +23,10 @@ class CategoryViewSet(viewsets.ModelViewSet):
 class ProductViewSet(viewsets.ModelViewSet):
     filterset_class = ProductFilter
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['name', 'description', 'category__name']
+    search_fields = ['name', 'description', 'category__name','tags']
     ordering_fields = ['price', 'created_at']
     parser_classes = [MultiPartParser, FormParser]
+    
 
     def get_queryset(self):
         if self.request.user.is_authenticated and self.request.user.is_vendor:

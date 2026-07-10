@@ -3,6 +3,17 @@ from django.conf import settings
 from products.models import Product
 
 
+class PickupStation(models.Model):
+    name = models.CharField(max_length=200)
+    location = models.CharField(max_length=200)
+    city = models.CharField(max_length=100)
+    phone = models.CharField(max_length=20)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.name} - {self.city}"
+
+
 class ShippingAddress(models.Model):
     customer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -56,6 +67,12 @@ class CartItem(models.Model):
         return f"{self.quantity} x {self.product.name}"
 
 
+DELIVERY_CHOICES = [
+    ('delivery', 'Home Delivery'),
+    ('pickup', 'Pickup Station'),
+]
+
+
 class Order(models.Model):
     STATUS_CHOICES = [
         ("pending", "Pending"),
@@ -73,7 +90,19 @@ class Order(models.Model):
     shipping_address = models.ForeignKey(
         ShippingAddress,
         on_delete=models.SET_NULL,
-        null=True
+        null=True,
+        blank=True
+    )
+    pickup_station = models.ForeignKey(
+        PickupStation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    delivery_method = models.CharField(
+        max_length=20,
+        choices=DELIVERY_CHOICES,
+        default='delivery'
     )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -97,7 +126,7 @@ class OrderItem(models.Model):
         on_delete=models.CASCADE
     )
     quantity = models.PositiveIntegerField(default=1)
-    price_at_purchase = models.DecimalField(max_digits=10, decimal_places=2)  # snapshot
+    price_at_purchase = models.DecimalField(max_digits=10, decimal_places=2)
 
     def get_subtotal(self):
         return self.price_at_purchase * self.quantity
@@ -120,7 +149,7 @@ class Payment(models.Model):
         related_name="payment"
     )
     amount = models.DecimalField(max_digits=10, decimal_places=2)
-    method = models.CharField(max_length=50)  # e.g. "mpesa", "card", "paypal"
+    method = models.CharField(max_length=50)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     transaction_id = models.CharField(max_length=255, blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)
