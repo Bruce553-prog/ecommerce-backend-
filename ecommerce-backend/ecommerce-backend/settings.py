@@ -61,7 +61,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-ROOT_URLCONF = 'Alx_CapstoneProject.urls'
+ROOT_URLCONF = 'ecommerce-backend.urls'
 
 TEMPLATES = [
     {
@@ -79,7 +79,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'Alx_CapstoneProject.wsgi.application'
+WSGI_APPLICATION = 'ecommerce-backend.wsgi.application'
 
 
 # Database

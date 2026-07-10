@@ -231,7 +231,35 @@ class PaymentViewSet(viewsets.GenericViewSet):
         payment = Payment.objects.create(
             order=order,
             amount=order.get_total_price(),
-            method=method
+            method=method,
+            status='completed'  # simulate payment for now
+        )
+
+        # Update order status to confirmed after payment
+        order.status = 'confirmed'
+        order.save()
+
+        # Send payment confirmation email
+        send_mail(
+            subject=f'Payment Confirmed - Order #{order.id} | The WCT',
+            message=f'''Hi {request.user.username},
+
+Your payment has been received and your order is now confirmed!
+
+Order ID: #{order.id}
+Amount Paid: KES {payment.amount}
+Payment Method: {payment.method}
+Status: Confirmed ✅
+
+Your order is now being processed and will be shipped soon.
+
+Thank you for shopping with The WCT!
+
+The WCT Team
+''',
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[request.user.email],
+            fail_silently=True,
         )
 
         serializer = PaymentSerializer(payment)

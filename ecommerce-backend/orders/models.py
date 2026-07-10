@@ -75,11 +75,14 @@ DELIVERY_CHOICES = [
 
 class Order(models.Model):
     STATUS_CHOICES = [
-        ("pending", "Pending"),
-        ("paid", "Paid"),
+        ("pending", "Pending Payment"),
+        ("confirmed", "Confirmed"),
+        ("processing", "Processing"),
         ("shipped", "Shipped"),
+        ("out_for_delivery", "Out for Delivery"),
         ("delivered", "Delivered"),
         ("cancelled", "Cancelled"),
+        
     ]
 
     customer = models.ForeignKey(
