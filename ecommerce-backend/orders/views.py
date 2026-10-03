@@ -1,3 +1,5 @@
+from django.db import transaction
+from django.db.models import F
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -16,25 +18,34 @@ from .serializers import (
 )
 
 
+def parse_int(value):
+    """Return value as an int, or None if it isn't a valid whole number."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class ShippingAddressViewSet(viewsets.ModelViewSet):
     serializer_class = ShippingAddressSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwner]
 
     def get_queryset(self):
-        return ShippingAddress.objects.filter(customer=self.request.user)
+        return ShippingAddress.objects.filter(customer=self.request.user).order_by('-is_default', '-id')
 
     @action(detail=True, methods=['post'])
     def set_default(self, request, pk=None):
         """Set a specific address as default."""
         address = self.get_object()
-        ShippingAddress.objects.filter(customer=request.user).update(is_default=False)
-        address.is_default = True
-        address.save()
+        with transaction.atomic():
+            ShippingAddress.objects.filter(customer=request.user).update(is_default=False)
+            address.is_default = True
+            address.save()
         return Response({"detail": "Default address updated."})
 
 
 class PickupStationViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = PickupStation.objects.filter(is_active=True)
+    queryset = PickupStation.objects.filter(is_active=True).order_by('city', 'name')
     serializer_class = PickupStationSerializer
     permission_classes = [permissions.AllowAny]
 
@@ -64,6 +75,18 @@ class CartViewSet(viewsets.GenericViewSet):
         product = serializer.validated_data['product']
         quantity = serializer.validated_data.get('quantity', 1)
 
+        if quantity < 1:
+            return Response({"error": "Quantity must be at least 1."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Don't let the cart hold more than is in stock.
+        existing = CartItem.objects.filter(cart=cart, product=product).first()
+        new_total = quantity + (existing.quantity if existing else 0)
+        if new_total > product.stock:
+            return Response(
+                {"error": f"Only {product.stock} in stock."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         cart_item, created = CartItem.objects.get_or_create(
             cart=cart,
             product=product,
@@ -80,10 +103,10 @@ class CartViewSet(viewsets.GenericViewSet):
     def remove_item(self, request):
         """Remove a product from the cart completely."""
         cart = self.get_or_create_cart(request.user)
-        product_id = request.data.get('product_id')
+        product_id = parse_int(request.data.get('product_id'))
 
-        if not product_id:
-            return Response({"error": "product_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if product_id is None:
+            return Response({"error": "A valid product_id is required."}, status=status.HTTP_400_BAD_REQUEST)
 
         CartItem.objects.filter(cart=cart, product_id=product_id).delete()
         return Response(CartSerializer(cart, context={'request': request}).data)
@@ -92,17 +115,31 @@ class CartViewSet(viewsets.GenericViewSet):
     def update_quantity(self, request):
         """Set a specific quantity for a cart item."""
         cart = self.get_or_create_cart(request.user)
-        product_id = request.data.get('product_id')
-        quantity = request.data.get('quantity')
+        product_id = parse_int(request.data.get('product_id'))
+        quantity = parse_int(request.data.get('quantity'))
 
-        if not product_id or quantity is None:
-            return Response({"error": "product_id and quantity are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if product_id is None or quantity is None:
+            return Response(
+                {"error": "A valid product_id and quantity are required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        if int(quantity) <= 0:
+        if quantity <= 0:
             CartItem.objects.filter(cart=cart, product_id=product_id).delete()
             return Response({"detail": "Item removed from cart."})
 
-        CartItem.objects.filter(cart=cart, product_id=product_id).update(quantity=quantity)
+        item = CartItem.objects.filter(cart=cart, product_id=product_id).select_related('product').first()
+        if not item:
+            return Response({"error": "Item not in cart."}, status=status.HTTP_404_NOT_FOUND)
+
+        if quantity > item.product.stock:
+            return Response(
+                {"error": f"Only {item.product.stock} in stock."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        item.quantity = quantity
+        item.save(update_fields=['quantity'])
         return Response(CartSerializer(cart, context={'request': request}).data)
 
     @action(detail=False, methods=['post'])
@@ -115,8 +152,11 @@ class CartViewSet(viewsets.GenericViewSet):
 
 class OrderViewSet(viewsets.GenericViewSet):
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
+    # Must exist on the class so individual actions can set their own throttle_scope.
+    throttle_scope = None
 
     def get_queryset(self):
+        # Users only ever see their own orders.
         return Order.objects.filter(
             customer=self.request.user
         ).select_related('shipping_address').prefetch_related('items__product')
@@ -133,17 +173,20 @@ class OrderViewSet(viewsets.GenericViewSet):
         """Get a single order detail."""
         try:
             order = self.get_queryset().get(pk=pk)
-        except Order.DoesNotExist:
+        except (Order.DoesNotExist, ValueError):
             return Response({"error": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
         serializer = OrderSerializer(order, context={'request': request})
         return Response(serializer.data)
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], throttle_scope='checkout')
     def checkout(self, request):
         """Convert cart to order."""
         serializer = OrderCreateSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        order = serializer.save()
+
+        # All-or-nothing: if anything fails, stock and cart changes are rolled back.
+        with transaction.atomic():
+            order = serializer.save()
 
         # Send order confirmation email
         items_list = '\n'.join([
@@ -186,58 +229,83 @@ The WCT Team
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         """Cancel a pending order and restore stock."""
-        try:
-            order = self.get_queryset().get(pk=pk)
-        except Order.DoesNotExist:
-            return Response({"error": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
+        with transaction.atomic():
+            try:
+                # Lock the row so two cancel requests can't both restore the stock.
+                order = Order.objects.select_for_update().get(pk=pk, customer=request.user)
+            except (Order.DoesNotExist, ValueError):
+                return Response({"error": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        if order.status != 'pending':
-            return Response({"error": "Only pending orders can be cancelled."}, status=status.HTTP_400_BAD_REQUEST)
+            if order.status != 'pending':
+                return Response(
+                    {"error": "Only pending orders can be cancelled."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-        # Restore stock for each item
-        for item in order.items.select_related('product').all():
-            item.product.stock += item.quantity
-            item.product.save()
+            # Restore stock for each item
+            for item in order.items.select_related('product').all():
+                item.product.__class__.objects.filter(pk=item.product_id).update(
+                    stock=F('stock') + item.quantity
+                )
 
-        order.status = 'cancelled'
-        order.save()
+            order.status = 'cancelled'
+            order.save()
+
         return Response({"detail": "Order cancelled successfully."})
 
 
 class PaymentViewSet(viewsets.GenericViewSet):
     permission_classes = [permissions.IsAuthenticated]
+    # Must exist on the class so individual actions can set their own throttle_scope.
+    throttle_scope = None
     serializer_class = PaymentSerializer
 
     def get_queryset(self):
         return Payment.objects.filter(order__customer=self.request.user)
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], throttle_scope='checkout')
     def initiate(self, request):
         """Initiate a payment for an order."""
+        # SAFETY: this endpoint marks orders as paid WITHOUT taking any money.
+        # It is only allowed while SIMULATE_PAYMENTS is on (defaults to DEBUG).
+        # Replace it with the M-Pesa flow before going live.
+        if not getattr(settings, 'SIMULATE_PAYMENTS', False):
+            return Response(
+                {"error": "Online payment is not available yet."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
         order_id = request.data.get('order_id')
-        method = request.data.get('method')
+        # The frontend sends "payment_method"; older code sent "method". Accept both.
+        method = request.data.get('method') or request.data.get('payment_method')
 
         if not order_id or not method:
             return Response({"error": "order_id and method are required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            order = Order.objects.get(pk=order_id, customer=request.user)
-        except Order.DoesNotExist:
-            return Response({"error": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
+        with transaction.atomic():
+            try:
+                order = Order.objects.select_for_update().get(pk=order_id, customer=request.user)
+            except (Order.DoesNotExist, ValueError, TypeError):
+                return Response({"error": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        if hasattr(order, 'payment'):
-            return Response({"error": "Payment already exists for this order."}, status=status.HTTP_400_BAD_REQUEST)
+            # Cancelled or already-paid orders can't be paid.
+            if order.status != 'pending':
+                return Response({"error": "Only pending orders can be paid."}, status=status.HTTP_400_BAD_REQUEST)
 
-        payment = Payment.objects.create(
-            order=order,
-            amount=order.get_total_price(),
-            method=method,
-            status='completed'  # simulate payment for now
-        )
+            if Payment.objects.filter(order=order).exists():
+                return Response({"error": "Payment already exists for this order."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Update order status to confirmed after payment
-        order.status = 'confirmed'
-        order.save()
+            # The amount always comes from the server, never from the browser.
+            payment = Payment.objects.create(
+                order=order,
+                amount=order.get_total_price(),
+                method=method,
+                status='completed'  # simulated payment
+            )
+
+            # Update order status to confirmed after payment
+            order.status = 'confirmed'
+            order.save()
 
         # Send payment confirmation email
         send_mail(
@@ -249,7 +317,7 @@ Your payment has been received and your order is now confirmed!
 Order ID: #{order.id}
 Amount Paid: KES {payment.amount}
 Payment Method: {payment.method}
-Status: Confirmed ✅
+Status: Confirmed
 
 Your order is now being processed and will be shipped soon.
 

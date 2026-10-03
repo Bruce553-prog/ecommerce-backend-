@@ -29,18 +29,42 @@ class Product(models.Model):
     stock = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
     tags = models.CharField(max_length=500, blank=True, help_text="Comma separated tags e.g. phone,smartphone,android")
+    specifications = models.JSONField(default=dict, blank=True)
+    video = models.FileField(upload_to='products/videos/', blank=True, null=True)
+    demo_video = models.FileField(upload_to='products/videos/', blank=True, null=True)  # NEW: second video
     category = models.ForeignKey(
         Category,
         on_delete=models.SET_NULL,
         null=True,
         related_name="products"
     )
+    # NEW: who owns this product. The views use it so a vendor can only change their own
+    # products. Empty (NULL) for products created before this field existed; only staff
+    # can change those until an owner is assigned.
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="products"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def _unique_slug(self):
+        # Two products with the same name used to produce the same slug and crash on save.
+        # Now the second one becomes "name-2", the third "name-3", and so on.
+        base = (slugify(self.name) or 'product')[:190]
+        slug = base
+        n = 2
+        while Product.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+            slug = f"{base}-{n}"
+            n += 1
+        return slug
+
     def save(self, *args, **kwargs):
         if not self.slug:
-            self.slug = slugify(self.name)
+            self.slug = self._unique_slug()
         super().save(*args, **kwargs)
 
     def average_rating(self):

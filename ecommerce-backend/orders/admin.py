@@ -50,6 +50,6 @@ class PaymentAdmin(admin.ModelAdmin):
     list_filter = ['status', 'method']
 @admin.register(PickupStation)
 class PickupStationAdmin(admin.ModelAdmin):
-    list_display = ['name', 'location', 'city', 'phone', 'is_active']
+    list_display = ['name', 'location', 'city', 'is_active']
     list_filter = ['city', 'is_active']
     search_fields = ['name', 'city']

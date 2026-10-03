@@ -60,3 +60,12 @@ htmlcov/
 # Uncomment if you don't want migrations tracked
 # */migrations/
 # !*/migrations/__init__.py
+.env
+db.sqlite3
+*.sql
+data.json
+media/
+__pycache__/
+
+# keep the template, ignore real env files
+!.env.example

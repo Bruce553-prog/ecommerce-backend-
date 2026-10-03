@@ -1,13 +1,23 @@
+from decimal import Decimal
+
 from django.db import models
 from django.conf import settings
 from products.models import Product
+
+
+# Delivery fees are set on the server. The browser only displays them, so a customer
+# can never change what they are charged. If you change a fee here, update the matching
+# number in Checkout.js so the page still shows the right amount.
+DELIVERY_FEES = {
+    'pickup': Decimal('90.00'),
+    'delivery': Decimal('200.00'),
+}
 
 
 class PickupStation(models.Model):
     name = models.CharField(max_length=200)
     location = models.CharField(max_length=200)
     city = models.CharField(max_length=100)
-    phone = models.CharField(max_length=20)
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
@@ -82,7 +92,7 @@ class Order(models.Model):
         ("out_for_delivery", "Out for Delivery"),
         ("delivered", "Delivered"),
         ("cancelled", "Cancelled"),
-        
+
     ]
 
     customer = models.ForeignKey(
@@ -107,12 +117,19 @@ class Order(models.Model):
         choices=DELIVERY_CHOICES,
         default='delivery'
     )
+    # Fee charged for this order, saved at checkout. Older orders default to 0,
+    # which keeps their totals exactly as they were.
+    delivery_fee = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    def get_total_price(self):
+    def get_items_total(self):
         return sum(item.get_subtotal() for item in self.items.all())
+
+    def get_total_price(self):
+        """Items plus delivery fee. This is what the customer is charged."""
+        return self.get_items_total() + self.delivery_fee
 
     def __str__(self):
         return f"Order {self.id} by {self.customer.username}"

@@ -13,22 +13,35 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 from decouple import config
+from django.core.exceptions import ImproperlyConfigured
 import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
-
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = config('SECRET_KEY')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', default=True, cast=bool)
+# SECURITY: defaults to False so a missing .env value can never leave debug on in production.
+# For local development, set DEBUG=True in your .env file.
+DEBUG = config('DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = [
+    h.strip() for h in config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',') if h.strip()
+]
+
+# The site refuses to start in production with an unsafe configuration, instead of
+# quietly running with it. Only checked when DEBUG is off.
+if not DEBUG:
+    if len(SECRET_KEY) < 50 or SECRET_KEY.startswith('django-insecure'):
+        raise ImproperlyConfigured(
+            'SECRET_KEY is too short or is a development key. Generate a strong one with: '
+            'python3 -c "import secrets; print(secrets.token_urlsafe(64))" '
+            'and put it in your server environment, never in Git.'
+        )
+    if '*' in ALLOWED_HOSTS:
+        raise ImproperlyConfigured("ALLOWED_HOSTS must list your real domains, not '*'.")
 
 
 # Application definition
@@ -83,10 +96,8 @@ WSGI_APPLICATION = 'ecommerce-backend.wsgi.application'
 
 
 # Database
-# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-
-# Replaced the SQlite database with the PostresSQL. SQlite is lightweight and not suitable for handling large number of users
-# The postresSQL is better and suitable for the ecomerse
+# PostgreSQL is used instead of SQLite because it handles many concurrent users
+# and is better suited to an e-commerce workload.
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
@@ -95,18 +106,21 @@ DATABASES = {
         'PASSWORD': config('DB_PASSWORD'),
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432'),
+        # In production set DB_SSLMODE=require so the connection to the database is encrypted.
+        'OPTIONS': {'sslmode': config('DB_SSLMODE', default='prefer')},
     }
 }
 
 # Password validation
-# https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
-
+# NOTE: these only run where the code calls validate_password() (register,
+# change-password, reset-confirm). Django REST Framework does not call them on its own.
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
     },
     {
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        'OPTIONS': {'min_length': 10},
     },
     {
         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
@@ -116,37 +130,42 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+# Password reset links expire after 1 hour (Django's default is 3 days).
+PASSWORD_RESET_TIMEOUT = 3600
+
 
 # Internationalization
-# https://docs.djangoproject.com/en/5.2/topics/i18n/
-
 LANGUAGE_CODE = 'en-us'
-
 TIME_ZONE = 'UTC'
-
 USE_I18N = True
-
 USE_TZ = True
 
 
 # Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.2/howto/static-files/
-
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# STATICFILES_STORAGE was removed in Django 5.1, so on 5.2 it is silently ignored.
+# STORAGES is the replacement.
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
 
 # Media files
 MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
-# https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
-
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'users.User'
 
-# JWT Authentication
+
+# Django REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -162,21 +181,109 @@ REST_FRAMEWORK = {
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
     ],
+
+    # Rate limiting.
+    # "anon" and "user" are generous on purpose: shoppers browsing products make many
+    # API calls, and many students share one campus IP. The tight limits are the scoped ones.
+    # "anon" and "user" apply to every endpoint straight away.
+    # The scoped rates below only take effect on views that set
+    # throttle_scope = "login" / "register" / "password_reset" / "password_change".
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '2000/hour',
+        'user': '5000/hour',
+        'login': '5/min',
+        'register': '10/hour',
+        'password_reset': '3/hour',
+        'password_reset_confirm': '10/hour',
+        'password_change': '5/hour',
+        'checkout': '30/hour',
+        'review': '20/hour',
+    },
 }
 
+# JWT
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
+    # 30 min for now. Drop to 15 once the frontend refreshes tokens automatically.
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
+    # Login tokens can be signed with their own secret. Defaults to SECRET_KEY, so nothing changes
+    # until you set JWT_SIGNING_KEY. Changing it later logs every user out.
+    'SIGNING_KEY': config('JWT_SIGNING_KEY', default=SECRET_KEY),
 }
 
-# CORS
+
+# Address of the Django admin panel. Keep the default for local work. In production, set
+# ADMIN_URL in .env to something only you know, e.g. ADMIN_URL=wct-staff-8h3k/
+# so bots scanning for /admin/ find nothing.
+ADMIN_URL = config('ADMIN_URL', default='admin/').strip('/') + '/'
+
+# SAFETY: while True, /orders/payments/initiate/ marks orders as paid WITHOUT taking money.
+# Defaults to DEBUG so it only works in local development. Remove once M-Pesa is integrated.
+SIMULATE_PAYMENTS = config('SIMULATE_PAYMENTS', default=DEBUG, cast=bool)
+
+# Frontend base URL, used to build password reset links.
+# Set FRONTEND_URL=https://thewct.co.ke in .env for production.
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
+
+# CORS: set CORS_ALLOWED_ORIGINS in .env for production,
+# e.g. CORS_ALLOWED_ORIGINS=https://thewct.co.ke,https://www.thewct.co.ke
 CORS_ALLOWED_ORIGINS = [
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-]# Email
+    o.strip() for o in config(
+        'CORS_ALLOWED_ORIGINS',
+        default='http://localhost:3000,http://127.0.0.1:3000',
+    ).split(',') if o.strip()
+]
+
+# Needed for the Django admin over HTTPS, e.g. CSRF_TRUSTED_ORIGINS=https://api.thewct.co.ke
+CSRF_TRUSTED_ORIGINS = [
+    o.strip() for o in config('CSRF_TRUSTED_ORIGINS', default='').split(',') if o.strip()
+]
+
+
+# Production-only security settings (active whenever DEBUG is False)
+if not DEBUG:
+    # --- HTTPS ---
+    SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=True, cast=bool)
+    # Set USE_PROXY_SSL_HEADER=True in .env only if your host terminates HTTPS at a proxy
+    # (Render, Heroku, Nginx...). Otherwise leave it off, or you may get a redirect loop.
+    if config('USE_PROXY_SSL_HEADER', default=False, cast=bool):
+        SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+    # --- Cookies (these protect the admin login session and the CSRF token) ---
+    SESSION_COOKIE_SECURE = True      # sent over HTTPS only
+    CSRF_COOKIE_SECURE = True         # sent over HTTPS only
+    SESSION_COOKIE_HTTPONLY = True    # JavaScript can't read the session cookie
+    SESSION_COOKIE_SAMESITE = 'Lax'   # not sent with cross-site POSTs
+    CSRF_COOKIE_SAMESITE = 'Lax'
+    SESSION_COOKIE_AGE = config('SESSION_COOKIE_AGE', default=28800, cast=int)  # admin stays signed in 8 hours
+
+    # --- HSTS: tells browsers to only ever use HTTPS for your site ---
+    # Start low. Raise to 31536000 (1 year) once HTTPS is confirmed working everywhere.
+    SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=3600, cast=int)
+    # Only turn these two on once every subdomain is HTTPS, and you are sure about preload.
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=False, cast=bool)
+    SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', default=False, cast=bool)
+
+    # --- Browser protection headers ---
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'
+    SECURE_REFERRER_POLICY = 'same-origin'
+    SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
+
+    # Turn off the browsable API page in production, so visitors only ever get JSON.
+    REST_FRAMEWORK['DEFAULT_RENDERER_CLASSES'] = ('rest_framework.renderers.JSONRenderer',)
+
+
+# Email
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = config('EMAIL_HOST')
 EMAIL_PORT = config('EMAIL_PORT', cast=int)
@@ -184,3 +291,13 @@ EMAIL_USE_TLS = config('EMAIL_USE_TLS', cast=bool)
 EMAIL_HOST_USER = config('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = config('EMAIL_HOST_USER')
+
+
+# M-Pesa (Daraja). Not used yet. These names are reserved now so the credentials only ever
+# come from the environment (.env locally, the server's settings in production), never from code.
+DARAJA_ENV = config('DARAJA_ENV', default='sandbox')   # 'sandbox' or 'production'
+DARAJA_CONSUMER_KEY = config('DARAJA_CONSUMER_KEY', default='')
+DARAJA_CONSUMER_SECRET = config('DARAJA_CONSUMER_SECRET', default='')
+DARAJA_SHORTCODE = config('DARAJA_SHORTCODE', default='')
+DARAJA_PASSKEY = config('DARAJA_PASSKEY', default='')
+DARAJA_CALLBACK_URL = config('DARAJA_CALLBACK_URL', default='')
